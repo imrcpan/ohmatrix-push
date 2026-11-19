@@ -564,6 +564,12 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
 
             body = self.base_request_body.copy()
             body["data"] = data
+            # A device that asked for a plain notification (see `plain_notification`) gets the text the app gave, shown by the phone
+            # itself: the app need not be started, and no room or event is sent.
+            plain = GcmPushkin._plain_notification(device)
+            if plain is not None:
+                body["notification"] = plain
+                body["data"] = {"prio": data.get("prio", "high")}
             if self.api_version is APIVersion.Legacy:
                 body["priority"] = "normal" if n.prio == "low" else "high"
             elif self.api_version is APIVersion.V1:
@@ -652,6 +658,31 @@ class GcmPushkin(ConcurrencyLimitedPushkin):
             # Count the number of failed devices.
             span_parent.set_tag("gcm_num_failed", len(failed))
             return failed
+
+    @staticmethod
+    @staticmethod
+    def _plain_notification(device: Device) -> Optional[Dict[str, str]]:
+        """
+        The visible notification a device asked for in its `default_payload`, as
+        `{"plain": {"title": ..., "body": ...}}`, or None when it asked for none. The
+        pusher sets this (the app's language, its words); Sygnal only passes it on, and
+        only with a title and a body that are text.
+        """
+        if not device.data:
+            return None
+        default_payload = device.data.get("default_payload")
+        if not isinstance(default_payload, dict):
+            return None
+        plain = default_payload.get("plain")
+        if not isinstance(plain, dict):
+            return None
+        title, body = plain.get("title"), plain.get("body")
+        if not isinstance(title, str) or not isinstance(body, str):
+            return None
+        return {
+            "title": title[:MAX_BYTES_PER_FIELD],
+            "body": body[:MAX_BYTES_PER_FIELD],
+        }
 
     @staticmethod
     def _build_data(

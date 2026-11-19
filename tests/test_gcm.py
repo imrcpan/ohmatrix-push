@@ -33,6 +33,22 @@ DEVICE_EXAMPLE2_APIV1 = {
     "pushkey": "spqr2",
     "pushkey_ts": 42,
 }
+DEVICE_EXAMPLE_APIV1_PLAIN = {
+    "app_id": "com.example.gcm.apiv1",
+    "pushkey": "spqr",
+    "pushkey_ts": 42,
+    "data": {
+        "default_payload": {
+            "plain": {"title": "OhMatrix", "body": "You have a new message"},
+        }
+    },
+}
+DEVICE_EXAMPLE_APIV1_PLAIN_BAD = {
+    "app_id": "com.example.gcm.apiv1",
+    "pushkey": "spqr",
+    "pushkey_ts": 42,
+    "data": {"default_payload": {"plain": {"title": 1, "body": "x"}}},
+}
 DEVICE_EXAMPLE_WITH_DEFAULT_PAYLOAD = {
     "app_id": "com.example.gcm",
     "pushkey": "spqr",
@@ -362,6 +378,52 @@ class GcmTestCase(testutils.TestCase):
 
         self.assertEqual(resp, {"rejected": []})
         self.assertEqual(gcm.num_requests, 1)
+
+    def test_plain_notification_api_v1(self) -> None:
+        """
+        A device that asked for a plain notification gets a visible one with the text
+        it gave, and nothing of the room or the event.
+        """
+        self.apns_pushkin_snotif = MagicMock()
+        gcm = self.get_test_pushkin("com.example.gcm.apiv1")
+        gcm._request_dispatch = self.apns_pushkin_snotif  # type: ignore[assignment] # noqa: E501
+
+        method = self.apns_pushkin_snotif
+        method.side_effect = testutils.make_async_magic_mock(([], []))
+
+        resp = self._request(
+            self._make_dummy_notification([DEVICE_EXAMPLE_APIV1_PLAIN])
+        )
+
+        self.assertEqual(resp, {"rejected": []})
+        self.assertEqual(1, method.call_count)
+        message = method.call_args.args[2]["message"]
+        self.assertEqual(
+            {"title": "OhMatrix", "body": "You have a new message"},
+            message["notification"],
+        )
+        self.assertEqual({"prio": "high"}, message["data"])
+        self.assertEqual("spqr", message["token"])
+        self.assertNotIn("room_id", message["data"])
+        self.assertNotIn("event_id", message["data"])
+        self.assertNotIn("sender", message["data"])
+
+    def test_plain_notification_malformed_is_ignored_api_v1(self) -> None:
+        """
+        A plain notification whose title or body is not text is sent as an ordinary one.
+        """
+        self.apns_pushkin_snotif = MagicMock()
+        gcm = self.get_test_pushkin("com.example.gcm.apiv1")
+        gcm._request_dispatch = self.apns_pushkin_snotif  # type: ignore[assignment] # noqa: E501
+
+        method = self.apns_pushkin_snotif
+        method.side_effect = testutils.make_async_magic_mock(([], []))
+
+        self._request(self._make_dummy_notification([DEVICE_EXAMPLE_APIV1_PLAIN_BAD]))
+
+        message = method.call_args.args[2]["message"]
+        self.assertNotIn("notification", message)
+        self.assertEqual(message["data"]["room_id"], "!slw48wfj34rtnrf:example.com")
 
     def test_expected_api_v1_with_default_payload(self) -> None:
         """
